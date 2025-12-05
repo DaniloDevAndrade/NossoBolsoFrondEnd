@@ -1,0 +1,169 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String   @unique
+  password  String
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Subscription info
+  trialEndsAt DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
+  subscriptionStatus String @default("trial") // trial, active, expired
+  subscriptionEndsAt DateTime?
+
+  // Relationship with partner
+  partnerId String? @unique
+  partner   User?   @relation("Partnership", fields: [partnerId], references: [id], onDelete: SetNull)
+  partnerOf User?   @relation("Partnership")
+
+  // Partner requests sent
+  sentRequests     PartnerRequest[] @relation("RequestSender")
+  // Partner requests received
+  receivedRequests PartnerRequest[] @relation("RequestReceiver")
+
+  // Financial agreement
+  agreement FinancialAgreement?
+
+  // Expenses created by this user
+  expenses Expense[]
+
+  // Incomes created by this user
+  incomes Income[]
+
+  // Credit cards owned
+  creditCards CreditCard[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model PartnerRequest {
+  id        String   @id @default(cuid())
+  senderId  String
+  sender    User     @relation("RequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  
+  receiverPhone String
+  receiverId    String?
+  receiver      User?   @relation("RequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  
+  status    String   @default("pending") // pending, accepted, rejected, cancelled
+  inviteCode String? @unique // For new user invites
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([receiverPhone])
+  @@index([inviteCode])
+}
+
+model FinancialAgreement {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type      String   @default("equal") // equal, proportional, custom
+  
+  // For proportional split
+  userPercentage    Float? @default(50)
+  partnerPercentage Float? @default(50)
+  
+  // For custom split per category
+  customRules Json? // { "alimentacao": { "user": 60, "partner": 40 }, ... }
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  description String
+  amount      Float
+  category    String   // alimentacao, transporte, moradia, etc
+  date        DateTime @default(now())
+  
+  // Split information
+  splitType   String   @default("equal") // equal, proportional, custom, solo
+  userAmount  Float
+  partnerAmount Float
+  
+  // Payment method
+  paymentMethod String @default("money") // money, credit_card
+  creditCardId  String?
+  creditCard    CreditCard? @relation(fields: [creditCardId], references: [id], onDelete: SetNull)
+  
+  // Installments
+  installments      Int?    @default(1)
+  currentInstallment Int?   @default(1)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([date])
+  @@index([category])
+  @@index([creditCardId])
+}
+
+model Income {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  description String?
+  amount      Float
+  category    String   // salario, freelance, investimentos, bonus, outros
+  date        DateTime @default(now())
+  
+  // Who received the income
+  owner       String   @default("user") // user, partner, shared
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([date])
+  @@index([category])
+}
+
+model CreditCard {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name        String   // Apelido do cartão
+  institution String   // nubank, inter, itau, etc
+  lastDigits  String   // Últimos 4 dígitos
+  limit       Float
+  dueDay      Int      // Dia do vencimento
+  
+  owner       String   @default("user") // user, partner
+  
+  expenses    Expense[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([owner])
+}
