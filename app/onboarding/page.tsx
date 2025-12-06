@@ -6,6 +6,8 @@ import OnboardingClient from "./OnboardingClient"
 export default async function OnboardingPage() {
   const user = await getCurrentUser()
 
+  console.log(user)
+
   if (!user) {
     redirect("/login")
   }
