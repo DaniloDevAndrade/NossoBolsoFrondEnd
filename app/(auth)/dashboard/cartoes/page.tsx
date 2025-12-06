@@ -44,7 +44,7 @@ type CreditCardDTO = {
   closingDay: number | null;
   used: number;
 
-  // 🔥 infos de dono vindas do backend
+  // infos de dono vindas do backend
   owner: "Você" | "Parceiro";
   userId: string;
   isCurrentUserOwner: boolean;
@@ -91,6 +91,54 @@ const formatCurrency = (value: number) =>
     maximumFractionDigits: 2,
   }).format(value);
 
+/**
+ * Mesmo conceito da página de detalhes:
+ * - Se hoje já passou o dia de fechamento -> fatura do PRÓXIMO mês
+ * - Senão -> fatura do mês atual
+ */
+const getInitialBillingMonthYear = (
+  closingDay?: number | null
+): { monthStr: string; yearStr: string } => {
+  const today = new Date();
+  let month = today.getMonth() + 1; // 1-12
+  let year = today.getFullYear();
+
+  if (typeof closingDay === "number" && closingDay >= 1 && closingDay <= 31) {
+    if (today.getDate() > closingDay) {
+      month += 1;
+      if (month === 13) {
+        month = 1;
+        year += 1;
+      }
+    }
+  }
+
+  return {
+    monthStr: String(month).padStart(2, "0"),
+    yearStr: String(year),
+  };
+};
+
+const getMonthName = (monthStr: string | null) => {
+  if (!monthStr) return "";
+  const month = Number(monthStr);
+  const names = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
+  return names[month - 1] ?? "";
+};
+
 export default function CartoesPage() {
   const router = useRouter();
 
@@ -102,6 +150,10 @@ export default function CartoesPage() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cardToDeleteId, setCardToDeleteId] = useState<string | null>(null);
+
+  // 🔥 mês/ano da fatura que estamos usando nesse grid
+  const [billingMonth, setBillingMonth] = useState<string | null>(null); // "01".."12"
+  const [billingYear, setBillingYear] = useState<string | null>(null); // "2025", etc
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -120,15 +172,47 @@ export default function CartoesPage() {
       setIsLoading(true);
       setError(null);
 
-      // Sempre buscar de acordo com a FATURA DO MÊS ATUAL
-      const today = new Date();
-      const month = today.getMonth() + 1; // 1-12
-      const year = today.getFullYear();
+      // 1) Primeiro fetch sem filtros -> só pra descobrir um closingDay de referência
+      const baseRes = await fetch(`${API_URL}/credit-cards`, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const baseBody = await baseRes.json().catch(() => null);
+
+      if (!baseRes.ok) {
+        const message = baseBody?.message || "Erro ao carregar cartões.";
+        throw new Error(message);
+      }
+
+      const baseData = baseBody as { cards: CreditCardDTO[] };
+      const baseCards = baseData.cards || [];
+
+      // Se não tiver nenhum cartão ainda, não precisa de segundo fetch
+      if (baseCards.length === 0) {
+        setCards([]);
+        setBillingMonth(null);
+        setBillingYear(null);
+        return;
+      }
+
+      // 2) Usa o closingDay do primeiro cartão como referência
+      const referenceClosingDay = baseCards[0].closingDay ?? null;
+      const { monthStr, yearStr } = getInitialBillingMonthYear(
+        referenceClosingDay
+      );
+
+      setBillingMonth(monthStr);
+      setBillingYear(yearStr);
 
       const params = new URLSearchParams();
-      params.set("month", String(month));
-      params.set("year", String(year));
+      params.set("month", String(Number(monthStr)));
+      params.set("year", yearStr);
 
+      // 3) Segundo fetch: agora sim, pedindo a FATURA correta (mês/ano) para todos os cartões
       const res = await fetch(
         `${API_URL}/credit-cards?${params.toString()}`,
         {
@@ -220,21 +304,32 @@ export default function CartoesPage() {
     }
   };
 
-  // 🔥 Separação com base em isCurrentUserOwner que veio do backend
+  // Separação com base em isCurrentUserOwner
   const youCards = cards.filter((c) => c.isCurrentUserOwner);
   const partnerCards = cards.filter((c) => !c.isCurrentUserOwner);
+
+  const monthLabel = getMonthName(billingMonth);
 
   const CardComponent = ({
     card,
     onDelete,
+    billingMonthLabel,
+    billingYear,
   }: {
     card: CreditCardDTO;
     onDelete: (id: string) => void;
+    billingMonthLabel?: string | null;
+    billingYear?: string | null;
   }) => {
     const theme = getBankTheme(card.institution);
     const used = card.used ?? 0;
     const usedPercentage =
       card.limit > 0 ? Math.min((used / card.limit) * 100, 100) : 0;
+
+    const billingText =
+      billingMonthLabel && billingYear
+        ? `Usado — Fatura de ${billingMonthLabel}/${billingYear}`
+        : "Utilizado (fatura atual)";
 
     return (
       <div
@@ -269,7 +364,7 @@ export default function CartoesPage() {
 
         <div className="mb-4">
           <div className="flex justify-between text-white/90 text-sm mb-2">
-            <span>Utilizado (fatura atual)</span>
+            <span>{billingText}</span>
             <span className="font-semibold text-white">
               {formatCurrency(used)} / {formatCurrency(card.limit)}
             </span>
@@ -308,7 +403,7 @@ export default function CartoesPage() {
         <div className="max-w-full animate-pulse">
           {/* Header skeleton */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 lg:mb-8">
-            <div className="space-y-2 w-full sm:w-auto">
+            <div className="space-y-2 w/full sm:w-auto">
               <div className="h-7 sm:h-8 w-40 sm:w-64 bg-muted/60 rounded-lg" />
               <div className="h-4 w-56 sm:w-80 bg-muted/40 rounded-lg" />
             </div>
@@ -348,13 +443,18 @@ export default function CartoesPage() {
     <DashboardLayout>
       <div className="max-w-full">
         {/* HEADER */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 lg:mb-8">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-2 lg:mb-4">
           <div>
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-foreground mb-2">
               Cartões de Crédito
             </h1>
             <p className="text-sm sm:text-base lg:text-lg text-muted-foreground">
               Gerencie seus cartões e do parceiro
+              {monthLabel && billingYear && (
+                <span className="block text-xs sm:text-sm mt-1">
+                  Fatura referente a {monthLabel} / {billingYear}
+                </span>
+              )}
             </p>
           </div>
           <Button
@@ -404,6 +504,8 @@ export default function CartoesPage() {
                   key={card.id}
                   card={card}
                   onDelete={handleDeleteClick}
+                  billingMonthLabel={monthLabel}
+                  billingYear={billingYear ?? undefined}
                 />
               ))}
 
@@ -422,6 +524,8 @@ export default function CartoesPage() {
                   key={card.id}
                   card={card}
                   onDelete={handleDeleteClick}
+                  billingMonthLabel={monthLabel}
+                  billingYear={billingYear ?? undefined}
                 />
               ))}
 

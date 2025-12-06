@@ -47,6 +47,12 @@ type Transaction = {
 
   createdById: string;
 
+  /**
+   * ⚠️ Backend agora já devolve isso RESOLVIDO
+   * de acordo com a conta logada:
+   * - "Você"  -> este usuário
+   * - "Parceiro" -> o outro usuário
+   */
   responsible: "Você" | "Parceiro";
 
   // income
@@ -100,6 +106,12 @@ export default function TransacoesPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonth);
   const [selectedYear, setSelectedYear] = useState<string>(currentYear);
   const [selectedCategory, setSelectedCategory] = useState<string>("todas");
+
+  /**
+   * Agora o filtro de responsável é APENAS em cima do
+   * que o backend manda em `transaction.responsible`,
+   * exatamente como o Dashboard Individual faz.
+   */
   const [selectedResponsible, setSelectedResponsible] = useState<
     "todos" | "voce" | "parceiro"
   >("todos");
@@ -145,10 +157,9 @@ export default function TransacoesPage() {
         params.set("category", selectedCategory);
       }
 
-      if (selectedResponsible && selectedResponsible !== "todos") {
-        params.set("responsible", selectedResponsible);
-      }
-
+      // ⚠️ NÃO enviamos "responsible" para a API.
+      // O backend já devolve o campo de forma correta
+      // de acordo com a conta logada. O filtro é só no front.
       const res = await fetch(`${API_URL}/transactions?${params.toString()}`, {
         method: "GET",
         credentials: "include",
@@ -184,23 +195,36 @@ export default function TransacoesPage() {
   useEffect(() => {
     fetchTransactions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectedMonth,
-    selectedYear,
-    selectedType,
-    selectedCategory,
-    selectedResponsible,
-  ]);
+  }, [selectedMonth, selectedYear, selectedType, selectedCategory]);
 
-  const sortedTransactions = [...transactions].sort(
+  /**
+   * 🔑 Filtro de RESPONSÁVEL:
+   * - "voce"     => transactions com responsible === "Você"
+   * - "parceiro" => transactions com responsible === "Parceiro"
+   * - "todos"    => não filtra
+   *
+   * O valor de `responsible` já vem pronto do backend
+   * com base em QUEM está logado (dinâmico).
+   */
+  const baseFilteredTransactions = transactions.filter((t) => {
+    if (selectedResponsible === "voce") {
+      return t.responsible === "Você";
+    }
+    if (selectedResponsible === "parceiro") {
+      return t.responsible === "Parceiro";
+    }
+    return true; // "todos"
+  });
+
+  const sortedTransactions = [...baseFilteredTransactions].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
   );
 
-  const totalIncome = transactions
+  const totalIncome = baseFilteredTransactions
     .filter((t) => t.type === "income")
     .reduce((sum, t) => sum + t.value, 0);
 
-  const totalExpense = transactions
+  const totalExpense = baseFilteredTransactions
     .filter((t) => t.type === "expense")
     .reduce((sum, t) => sum + t.value, 0);
 
@@ -332,7 +356,7 @@ export default function TransacoesPage() {
               {Array.from({ length: 4 }).map((_, idx) => (
                 <div
                   key={idx}
-                  className={`flex items-center px-4 sm:px-6 py-3 sm:py-4 ${
+                  className={`flex items-center gap-4 px-4 py-3 sm:px-6 sm:py-4 ${
                     idx % 2 === 0 ? "bg-card" : "bg-secondary/10"
                   }`}
                 >
@@ -656,12 +680,15 @@ export default function TransacoesPage() {
                       {transaction.type === "income" ? "+" : "-"}
                       {formatCurrency(transaction.value)}
                     </td>
+                    {/* 🔥 Responsável AGORA vem direto do backend (dinâmico) */}
                     <td className="py-4 px-4 sm:px-6 text-muted-foreground">
                       {transaction.responsible}
                     </td>
                     <td className="py-4 px-4 sm:px-6">
                       {transaction.type === "income" ? (
-                        <span className="text-sm text-muted-foreground">-</span>
+                        <span className="text-sm text-muted-foreground">
+                          -
+                        </span>
                       ) : transaction.paymentMethod === "card" ? (
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
@@ -725,7 +752,8 @@ export default function TransacoesPage() {
                       className="py-6 px-4 sm:px-6 text-center text-sm text-muted-foreground"
                       colSpan={9}
                     >
-                      Nenhuma transação encontrada para os filtros selecionados.
+                      Nenhuma transação encontrada para os filtros
+                      selecionados.
                     </td>
                   </tr>
                 )}

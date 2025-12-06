@@ -14,6 +14,7 @@ import {
 import { AddExpenseModal } from "@/components/add-expense-modal";
 import { AddIncomeModal } from "@/components/add-income-modal";
 import Link from "next/link";
+import { toast } from "sonner";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -28,6 +29,8 @@ type Transaction = {
   date: string;
   method?: string;
 };
+
+type CardOwner = "Você" | "Parceiro";
 
 type CreditCardInstitution =
   | "NUBANK"
@@ -48,6 +51,10 @@ type CreditCardDTO = {
   institution: CreditCardInstitution;
   used: number;
   limit: number;
+  lastDigits?: string;
+  dueDay?: number | null;
+  closingDay?: number | null;
+  owner: CardOwner;
 };
 
 type GoalDTO = {
@@ -57,12 +64,12 @@ type GoalDTO = {
   target: number;
 };
 
-/* ===================== CARD THEMES (IGUAL /cartoes) ===================== */
+/* ===================== CARD THEMES (IGUAL /cartoes e Individual) ===================== */
 
 const NOSSO_BOLSO_THEME = {
   primary: "#020617",
   secondary: "#22c55e",
-};
+} as const;
 
 const bankThemes: Record<
   CreditCardInstitution,
@@ -93,7 +100,6 @@ const formatDateFromISO = (iso: string | undefined | null) => {
   const parts = iso.split("-");
   if (parts.length !== 3) return iso;
   const [year, month, day] = parts.map(Number);
-  // cria Date em horário local, evitando o shift de timezone do parse ISO (UTC)
   const d = new Date(year, month - 1, day);
   return d.toLocaleDateString("pt-BR");
 };
@@ -105,6 +111,47 @@ const formatCurrency = (value: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+
+const getMonthName = (month: number) => {
+  const names = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
+  return names[month - 1] ?? "";
+};
+
+/**
+ * Lógica de fatura: se já passou o fechamento, mostra próxima fatura.
+ */
+const getInitialBillingMonthYear = (
+  closingDay?: number | null
+): { month: number; year: number } => {
+  const today = new Date();
+  let month = today.getMonth() + 1; // 1-12
+  let year = today.getFullYear();
+
+  if (typeof closingDay === "number" && closingDay >= 1 && closingDay <= 31) {
+    if (today.getDate() > closingDay) {
+      month += 1;
+      if (month === 13) {
+        month = 1;
+        year += 1;
+      }
+    }
+  }
+
+  return { month, year };
+};
 
 /* ===================== PAGE ===================== */
 
@@ -119,6 +166,18 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // mês/ano padrão para transações/metas
+  const [currentMonth] = useState(() => new Date().getMonth() + 1);
+  const [currentYear] = useState(() => new Date().getFullYear());
+
+  // mês/ano de FATURA (cartões) com lógica de fechamento
+  const [billingMonth, setBillingMonth] = useState<number>(currentMonth);
+  const [billingYear, setBillingYear] = useState<number>(currentYear);
+  const billingMonthLabel = getMonthName(billingMonth);
+
+  const hasBillingInfo =
+    !!billingMonthLabel && typeof billingYear === "number" && billingYear > 0;
+
   useEffect(() => {
     window.scrollTo(0, 0);
     fetchDashboardData();
@@ -126,13 +185,13 @@ export default function DashboardPage() {
   }, []);
 
   const fetchDashboardData = async () => {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
+    const month = currentMonth;
+    const year = currentYear;
 
     if (!API_URL) {
       console.error("NEXT_PUBLIC_API_URL não configurada");
       setError("Erro de configuração da API.");
+      toast.error("Erro de configuração da API.");
       return;
     }
 
@@ -140,36 +199,85 @@ export default function DashboardPage() {
       setIsLoading(true);
       setError(null);
 
-      const [txRes, cardsRes, goalsRes] = await Promise.all([
-        fetch(`${API_URL}/transactions?month=${month}&year=${year}`, {
+      // 1) Transações (mês atual)
+      const txRes = await fetch(
+        `${API_URL}/transactions?month=${month}&year=${year}`,
+        {
           credentials: "include",
-        }),
-        fetch(`${API_URL}/credit-cards?month=${month}&year=${year}`, {
-          credentials: "include",
-        }),
-        fetch(`${API_URL}/goals`, { credentials: "include" }),
-      ]);
+        }
+      );
 
-      if (!txRes.ok || !cardsRes.ok || !goalsRes.ok) {
-        console.error("[Dashboard] Erro nas respostas da API", {
-          txStatus: txRes.status,
-          cardsStatus: cardsRes.status,
-          goalsStatus: goalsRes.status,
-        });
-        setError("Erro ao carregar dados do dashboard.");
-        return;
+      if (!txRes.ok) {
+        const body = await txRes.json().catch(() => null);
+        const msg = body?.message || "Erro ao carregar transações.";
+        throw new Error(msg);
       }
 
       const txData = await txRes.json().catch(() => null);
-      const cardsData = await cardsRes.json().catch(() => null);
-      const goalsData = await goalsRes.json().catch(() => null);
-
       setTransactions(txData?.transactions ?? []);
-      setCards(cardsData?.cards ?? []);
+
+      // 2) Metas (sem lógica de fechamento)
+      const goalsRes = await fetch(`${API_URL}/goals`, {
+        credentials: "include",
+      });
+
+      if (!goalsRes.ok) {
+        const body = await goalsRes.json().catch(() => null);
+        const msg = body?.message || "Erro ao carregar metas.";
+        throw new Error(msg);
+      }
+
+      const goalsData = await goalsRes.json().catch(() => null);
       setGoals(goalsData?.goals ?? []);
-    } catch (err) {
+
+      // 3) Cartões:
+      //    3.1 Busca base sem filtro pra descobrir closingDay
+      const baseRes = await fetch(`${API_URL}/credit-cards`, {
+        credentials: "include",
+      });
+      const baseBody = await baseRes.json().catch(() => null);
+
+      if (!baseRes.ok) {
+        const msg = baseBody?.message || "Erro ao carregar cartões.";
+        throw new Error(msg);
+      }
+
+      const baseCards = (baseBody?.cards as CreditCardDTO[]) ?? [];
+
+      if (baseCards.length === 0) {
+        setCards([]);
+        setBillingMonth(currentMonth);
+        setBillingYear(currentYear);
+        return;
+      }
+
+      const referenceClosingDay = baseCards[0].closingDay ?? null;
+      const { month: billingMonthCalc, year: billingYearCalc } =
+        getInitialBillingMonthYear(referenceClosingDay);
+
+      setBillingMonth(billingMonthCalc);
+      setBillingYear(billingYearCalc);
+
+      //    3.2 Busca de cartões já com mês/ano da fatura calculada
+      const cardsRes = await fetch(
+        `${API_URL}/credit-cards?month=${billingMonthCalc}&year=${billingYearCalc}`,
+        {
+          credentials: "include",
+        }
+      );
+      const cardsBody = await cardsRes.json().catch(() => null);
+
+      if (!cardsRes.ok) {
+        const msg = cardsBody?.message || "Erro ao carregar cartões.";
+        throw new Error(msg);
+      }
+
+      setCards(cardsBody?.cards ?? []);
+    } catch (err: any) {
       console.error("[Dashboard] Erro geral:", err);
-      setError("Erro inesperado ao carregar o dashboard.");
+      const msg = err?.message || "Erro inesperado ao carregar o dashboard.";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -184,6 +292,8 @@ export default function DashboardPage() {
     .reduce((sum, t) => sum + t.value, 0);
 
   const balance = totalIncome - totalExpenses;
+
+  const totalCardsUsed = cards.reduce((sum, c) => sum + (c.used ?? 0), 0);
 
   /* ============ SKELETON INICIAL (primeiro load) ============ */
   if (
@@ -350,24 +460,33 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground mt-2">Total gasto</p>
           </div>
 
-          {/* Cards Summary */}
+          {/* Cards Summary (com lógica de fatura) */}
           <div className="bg-card/80 backdrop-blur-xl border border-border/20 rounded-2xl p-6 shadow-lg">
             <div className="flex items-center justify-between mb-4">
               <div className="w-12 h-12 bg-red-500/20 rounded-xl flex items-center justify-center">
                 <CreditCard className="w-6 h-6 text-red-500" />
               </div>
             </div>
-            <p className="text-sm text-muted-foreground mb-1">Cartões</p>
+            <p className="text-sm text-muted-foreground mb-1">
+              Cartões (Conta)
+            </p>
             <p className="text-2xl sm:text-3xl font-bold text-red-500">
-              {formatCurrency(cards.reduce((sum, c) => sum + c.used, 0))}
+              {formatCurrency(totalCardsUsed)}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              {cards.length} cartões ativos
+              {hasBillingInfo ? (
+                <>
+                  Fatura de {billingMonthLabel} / {billingYear} · {cards.length}{" "}
+                  cartão(ões) ativos
+                </>
+              ) : (
+                <>{cards.length} cartão(ões) ativos</>
+              )}
             </p>
           </div>
         </div>
 
-        {/* Credit Cards Section */}
+        {/* Credit Cards Section (igual lógica do Individual) */}
         <div className="bg-card/80 backdrop-blur-xl border border-border/20 rounded-2xl p-4 sm:p-6 shadow-lg mb-6 lg:mb-8">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl sm:text-2xl font-bold text-foreground flex items-center gap-2">
@@ -392,9 +511,14 @@ export default function DashboardPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {cards.map((card) => {
+                const used = card.used ?? 0;
                 const usedPercentage =
-                  card.limit > 0 ? (card.used / card.limit) * 100 : 0;
+                  card.limit > 0 ? Math.min((used / card.limit) * 100, 100) : 0;
                 const theme = getBankTheme(card.institution);
+
+                const billingText = hasBillingInfo
+                  ? `Usado — Fatura de ${billingMonthLabel}/${billingYear}`
+                  : "Usado (fatura atual)";
 
                 return (
                   <Link key={card.id} href={`/dashboard/cartoes/${card.id}`}>
@@ -410,18 +534,16 @@ export default function DashboardPage() {
                       </div>
                       <div className="mb-2">
                         <div className="flex justify-between text-white text-xs mb-1">
-                          <span>Usado</span>
+                          <span>{billingText}</span>
                           <span className="font-semibold">
-                            {formatCurrency(card.used)} /{" "}
+                            {formatCurrency(used)} /{" "}
                             {formatCurrency(card.limit)}
                           </span>
                         </div>
                         <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-white transition-all"
-                            style={{
-                              width: `${Math.min(usedPercentage, 100)}%`,
-                            }}
+                            style={{ width: `${usedPercentage}%` }}
                           />
                         </div>
                       </div>
@@ -622,11 +744,15 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Modals */}
-      <AddExpenseModal open={isModalOpen} onOpenChange={setIsModalOpen} />
+      <AddExpenseModal
+        open={isModalOpen}
+        onOpenChange={setIsModalOpen}
+        onSaved={fetchDashboardData}
+      />
       <AddIncomeModal
         open={isIncomeModalOpen}
         onOpenChange={setIsIncomeModalOpen}
+        onSaved={fetchDashboardData}
       />
     </DashboardLayout>
   );

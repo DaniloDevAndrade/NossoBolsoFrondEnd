@@ -25,13 +25,12 @@ interface AddExpenseModalProps {
   onOpenChange: (open: boolean) => void;
   preselectedCardId?: string;
   editData?: any;
-  onSaved?: () => void; // garante que a página seja atualizada (router.refresh ou refetch)
+  onSaved?: () => void;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
-// ---- HELPERS DE MOEDA PARA INPUT ----
-
+// helpers de moeda
 const formatNumberToPtBR = (value: number) =>
   value.toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
@@ -40,12 +39,9 @@ const formatNumberToPtBR = (value: number) =>
 
 const formatCurrencyInput = (raw: string) => {
   const digits = raw.replace(/\D/g, "");
-
   if (!digits) return "";
-
   const int = parseInt(digits, 10);
   const float = int / 100;
-
   return formatNumberToPtBR(float);
 };
 
@@ -249,7 +245,6 @@ export function AddExpenseModal({
   };
 
   const handleInstallmentsChange = (value: string) => {
-    // permite apagar tudo sem travar em 1
     if (value === "") {
       setInstallments("");
       return;
@@ -258,7 +253,7 @@ export function AddExpenseModal({
     let total = Number(value);
 
     if (!Number.isFinite(total)) {
-      return; // ignora lixo tipo letras
+      return;
     }
 
     if (total < 1) total = 1;
@@ -272,7 +267,6 @@ export function AddExpenseModal({
   };
 
   const handleCurrentInstallmentChange = (value: string) => {
-    // permite apagar o campo (""), depois valida no salvar
     if (value === "") {
       setCurrentInstallment("");
       return;
@@ -353,7 +347,6 @@ export function AddExpenseModal({
         return;
       }
     } else {
-      // à vista ou débito
       total = 1;
       current = 1;
     }
@@ -372,13 +365,14 @@ export function AddExpenseModal({
       paymentMethod,
     };
 
+    const isEdit = !!editData?.id;
+
     if (paymentMethod === "cartao") {
       payload.creditCardId = selectedCard;
       payload.installments = total;
       payload.currentInstallment = current;
     }
 
-    const isEdit = !!editData?.id;
     const url = isEdit
       ? `${API_URL}/transactions/expenses/${editData.id}`
       : `${API_URL}/transactions/expenses`;
@@ -424,7 +418,6 @@ export function AddExpenseModal({
             : "Despesa adicionada com sucesso.")
       );
 
-      // aqui você garante a atualização da página (router.refresh ou refetch)
       onSaved?.();
       onOpenChange(false);
     } catch (err) {

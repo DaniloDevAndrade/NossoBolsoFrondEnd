@@ -23,14 +23,36 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 type Person = "you" | "partner";
 
+type TransactionType = "income" | "expense";
+
 type Transaction = {
   id: string;
-  type: "income" | "expense";
+  type: TransactionType;
   description: string;
   category: string;
   value: number;
-  date: string;
-  method?: string;
+  date: string; // "YYYY-MM-DD"
+
+  createdById: string;
+
+  responsible: "Você" | "Parceiro";
+
+  // income
+  receivedBy?: "Você" | "Parceiro" | "Compartilhado";
+
+  // expense
+  paidBy?: "Você" | "Parceiro";
+
+  youPay?: number;
+  partnerPays?: number;
+  paymentMethod?: "cash" | "card";
+  cardId?: string | null;
+  cardName?: string | null;
+  cardDigits?: string | null;
+
+  installments?: number | null;
+  currentInstallment?: number | null;
+  installment?: string | null;
 };
 
 type CardOwner = "Você" | "Parceiro";
@@ -89,6 +111,8 @@ function getBankTheme(institution?: CreditCardInstitution | null) {
   return bankThemes[institution] ?? NOSSO_BOLSO_THEME;
 }
 
+/* ===================== HELPERS ===================== */
+
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -106,17 +130,69 @@ const formatDateFromISO = (iso: string | undefined | null) => {
   return d.toLocaleDateString("pt-BR");
 };
 
+const getMonthName = (month: number) => {
+  const names = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
+  return names[month - 1] ?? "";
+};
+
+/**
+ * Lógica de fatura: se já passou o fechamento, mostra próxima fatura.
+ */
+const getInitialBillingMonthYear = (
+  closingDay?: number | null
+): { month: number; year: number } => {
+  const today = new Date();
+  let month = today.getMonth() + 1; // 1-12
+  let year = today.getFullYear();
+
+  if (typeof closingDay === "number" && closingDay >= 1 && closingDay <= 31) {
+    if (today.getDate() > closingDay) {
+      month += 1;
+      if (month === 13) {
+        month = 1;
+        year += 1;
+      }
+    }
+  }
+
+  return { month, year };
+};
+
 /* ===================== PAGE ===================== */
 
 export default function DashboardPage() {
   const [person, setPerson] = useState<Person>("you");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [cards, setCards] = useState<CreditCardDTO[]>([]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
+
+  // mês/ano de calendário para transações
+  const [currentMonth] = useState(() => new Date().getMonth() + 1);
+  const [currentYear] = useState(() => new Date().getFullYear());
+
+  // mês/ano da FATURA (cartões)
+  const [billingMonth, setBillingMonth] = useState<number>(currentMonth);
+  const [billingYear, setBillingYear] = useState<number>(currentYear);
+
+  const billingMonthLabel = getMonthName(billingMonth);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -136,39 +212,71 @@ export default function DashboardPage() {
       return;
     }
 
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
-    const responsible = person === "you" ? "voce" : "parceiro";
-
     try {
       setIsLoading(true);
       setError(null);
 
-      const [txRes, cardsRes] = await Promise.all([
-        fetch(
-          `${API_URL}/transactions?month=${month}&year=${year}&responsible=${responsible}`,
-          { credentials: "include" }
-        ),
-        fetch(`${API_URL}/credit-cards?month=${month}&year=${year}`, {
-          credentials: "include",
-        }),
-      ]);
+      const month = currentMonth;
+      const year = currentYear;
 
+      // 1) Transações: mesmo endpoint da página de Transações
+      const txRes = await fetch(
+        `${API_URL}/transactions?month=${month}&year=${year}`,
+        {
+          credentials: "include",
+        }
+      );
       const txBody = await txRes.json().catch(() => null);
-      const cardsBody = await cardsRes.json().catch(() => null);
 
       if (!txRes.ok) {
         const msg = txBody?.message || "Erro ao carregar transações.";
         throw new Error(msg);
       }
 
+      const allTransactions = (txBody?.transactions ?? []) as Transaction[];
+
+      // 2) Cartões: primeiro busca sem filtro pra descobrir closingDay
+      const baseRes = await fetch(`${API_URL}/credit-cards`, {
+        credentials: "include",
+      });
+      const baseBody = await baseRes.json().catch(() => null);
+
+      if (!baseRes.ok) {
+        const msg = baseBody?.message || "Erro ao carregar cartões.";
+        throw new Error(msg);
+      }
+
+      const baseCards = (baseBody?.cards as CreditCardDTO[]) ?? [];
+
+      if (baseCards.length === 0) {
+        setTransactions(allTransactions);
+        setCards([]);
+        setBillingMonth(currentMonth);
+        setBillingYear(currentYear);
+        return;
+      }
+
+      const referenceClosingDay = baseCards[0].closingDay ?? null;
+      const { month: billingMonthCalc, year: billingYearCalc } =
+        getInitialBillingMonthYear(referenceClosingDay);
+
+      setBillingMonth(billingMonthCalc);
+      setBillingYear(billingYearCalc);
+
+      const cardsRes = await fetch(
+        `${API_URL}/credit-cards?month=${billingMonthCalc}&year=${billingYearCalc}`,
+        {
+          credentials: "include",
+        }
+      );
+      const cardsBody = await cardsRes.json().catch(() => null);
+
       if (!cardsRes.ok) {
         const msg = cardsBody?.message || "Erro ao carregar cartões.";
         throw new Error(msg);
       }
 
-      setTransactions(txBody?.transactions ?? []);
+      setTransactions(allTransactions);
       setCards(cardsBody?.cards ?? []);
     } catch (err: any) {
       console.error("[Dashboard] Erro ao carregar dados:", err);
@@ -180,19 +288,31 @@ export default function DashboardPage() {
     }
   };
 
-  const totalIncome = transactions
+  // 🔥 Hoje o filtro usa o `responsible` que veio da API
+  const currentOwnerLabel: CardOwner = person === "you" ? "Você" : "Parceiro";
+
+  const personTransactions = transactions.filter(
+    (t) => t.responsible === currentOwnerLabel
+  );
+
+  const totalIncome = personTransactions
     .filter((t) => t.type === "income")
     .reduce((sum, t) => sum + t.value, 0);
 
-  const totalExpenses = transactions
+  const totalExpenses = personTransactions
     .filter((t) => t.type === "expense")
     .reduce((sum, t) => sum + t.value, 0);
 
   const balance = totalIncome - totalExpenses;
 
-  const currentOwnerLabel: CardOwner = person === "you" ? "Você" : "Parceiro";
   const personCards = cards.filter((c) => c.owner === currentOwnerLabel);
-  const totalCardsUsed = personCards.reduce((sum, c) => sum + (c.used ?? 0), 0);
+  const totalCardsUsed = personCards.reduce(
+    (sum, c) => sum + (c.used ?? 0),
+    0
+  );
+
+  const hasBillingInfo =
+    !!billingMonthLabel && typeof billingYear === "number" && billingYear > 0;
 
   return (
     <DashboardLayout>
@@ -228,11 +348,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {error && (
-          <p className="text-sm text-destructive mb-4">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-sm text-destructive mb-4">{error}</p>}
 
         {/* Main Stats Grid */}
         {isLoading ? (
@@ -246,7 +362,9 @@ export default function DashboardPage() {
                   <Wallet className="w-6 h-6 text-primary" />
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground mb-1">Saldo do mês</p>
+              <p className="text-sm text-muted-foreground mb-1">
+                Saldo do mês
+              </p>
               <p
                 className={`text-2xl sm:text-3xl font-bold ${
                   balance >= 0 ? "text-primary" : "text-red-500"
@@ -305,7 +423,14 @@ export default function DashboardPage() {
                 {formatCurrency(totalCardsUsed)}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                {personCards.length} cartão(ões) ativos
+                {hasBillingInfo ? (
+                  <>
+                    Fatura de {billingMonthLabel} / {billingYear} ·{" "}
+                    {personCards.length} cartão(ões) ativos
+                  </>
+                ) : (
+                  <>{personCards.length} cartão(ões) ativos</>
+                )}
               </p>
             </div>
           </div>
@@ -339,6 +464,10 @@ export default function DashboardPage() {
                   card.limit > 0 ? Math.min((used / card.limit) * 100, 100) : 0;
                 const theme = getBankTheme(card.institution);
 
+                const billingText = hasBillingInfo
+                  ? `Usado — Fatura de ${billingMonthLabel}/${billingYear}`
+                  : "Usado (fatura atual)";
+
                 return (
                   <Link key={card.id} href={`/dashboard/cartoes/${card.id}`}>
                     <div
@@ -353,7 +482,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="mb-2">
                         <div className="flex justify-between text-white text-xs mb-1">
-                          <span>Usado (fatura atual)</span>
+                          <span>{billingText}</span>
                           <span className="font-semibold">
                             {formatCurrency(used)} /{" "}
                             {formatCurrency(card.limit)}
@@ -430,16 +559,13 @@ export default function DashboardPage() {
                         <th className="text-right py-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold text-muted-foreground">
                           Valor
                         </th>
-                        {/* <th className="text-left py-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold text-muted-foreground hidden lg:table-cell">
-                          Método
-                        </th> */}
                         <th className="text-left py-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold text-muted-foreground hidden sm:table-cell">
                           Data
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {transactions.slice(0, 5).map((transaction) => (
+                      {personTransactions.slice(0, 5).map((transaction) => (
                         <tr
                           key={transaction.id}
                           className="border-b border-border/10 hover:bg-secondary/30 transition-colors"
@@ -475,18 +601,13 @@ export default function DashboardPage() {
                             {transaction.type === "income" ? "+" : "-"}
                             {formatCurrency(transaction.value)}
                           </td>
-                          {/* <td className="py-3 sm:py-4 px-3 sm:px-4 text-sm sm:text-base text-muted-foreground hidden lg:table-cell">
-                            {transaction.type === "expense"
-                              ? transaction.method
-                              : "-"}
-                          </td> */}
                           <td className="py-3 sm:py-4 px-3 sm:px-4 text-sm sm:text-base text-muted-foreground hidden sm:table-cell whitespace-nowrap">
                             {formatDateFromISO(transaction.date)}
                           </td>
                         </tr>
                       ))}
 
-                      {!isLoading && transactions.length === 0 && (
+                      {!isLoading && personTransactions.length === 0 && (
                         <tr>
                           <td
                             colSpan={6}
@@ -517,14 +638,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Modals */}
+      {/* Modals (já com onSaved para recarregar o dashboard) */}
       <AddExpenseModal
         open={isExpenseModalOpen}
         onOpenChange={setIsExpenseModalOpen}
+        onSaved={loadData}
       />
       <AddIncomeModal
         open={isIncomeModalOpen}
         onOpenChange={setIsIncomeModalOpen}
+        onSaved={loadData}
       />
     </DashboardLayout>
   );
