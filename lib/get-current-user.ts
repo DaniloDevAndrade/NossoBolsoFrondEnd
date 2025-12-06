@@ -30,6 +30,7 @@ export async function getCurrentUser() {
         cookie: `access_token=${token}`,
       },
       cache: "no-store",
+      credentials: "include"
     });
 
     console.log(res)
