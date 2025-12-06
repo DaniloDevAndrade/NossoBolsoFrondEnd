@@ -14,10 +14,8 @@ if (!API_URL) {
 }
 
 export async function getCurrentUser() {
-  
   const cookieStore = await cookies();
   const token = cookieStore.get("access_token")?.value;
-  console.log(token)
 
   if (!token) {
     return null;
@@ -32,8 +30,6 @@ export async function getCurrentUser() {
       cache: "no-store",
       credentials: "include"
     });
-
-    console.log(res)
 
     if (!res.ok) {
       return null;
