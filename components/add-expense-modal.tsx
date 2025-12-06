@@ -23,25 +23,21 @@ import { toast } from "sonner";
 interface AddExpenseModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** usado na página de detalhes do cartão */
   preselectedCardId?: string;
-  /** transação para edição, vinda da página de transações ou detalhes do cartão */
   editData?: any;
-  onSaved?: () => void;
+  onSaved?: () => void; // garante que a página seja atualizada (router.refresh ou refetch)
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 // ---- HELPERS DE MOEDA PARA INPUT ----
 
-// formata para "3.000,00" a partir de um número
 const formatNumberToPtBR = (value: number) =>
   value.toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
-// recebe o texto digitado, mantém só dígitos e devolve string formatada "3.000,00"
 const formatCurrencyInput = (raw: string) => {
   const digits = raw.replace(/\D/g, "");
 
@@ -53,7 +49,6 @@ const formatCurrencyInput = (raw: string) => {
   return formatNumberToPtBR(float);
 };
 
-// converte "3.000,00" -> 3000 (number)
 const parseCurrencyToNumber = (value: string): number => {
   if (!value) return 0;
   const normalized = value.replace(/\./g, "").replace(",", ".");
@@ -67,10 +62,9 @@ type CreditCardOption = {
   id: string;
   name: string;
   lastDigits: string;
-  owner: CardOwner; // "you" => Você, "partner" => Parceiro
+  owner: CardOwner;
 };
 
-// helper para parsear string "2/12"
 const parseInstallmentString = (installment?: string | null) => {
   if (!installment) return { current: 1, total: 1 };
   const [curStr, totStr] = installment.split("/");
@@ -255,7 +249,18 @@ export function AddExpenseModal({
   };
 
   const handleInstallmentsChange = (value: string) => {
-    let total = Number(value) || 1;
+    // permite apagar tudo sem travar em 1
+    if (value === "") {
+      setInstallments("");
+      return;
+    }
+
+    let total = Number(value);
+
+    if (!Number.isFinite(total)) {
+      return; // ignora lixo tipo letras
+    }
+
     if (total < 1) total = 1;
 
     setInstallments(String(total));
@@ -267,7 +272,17 @@ export function AddExpenseModal({
   };
 
   const handleCurrentInstallmentChange = (value: string) => {
-    let num = Number(value) || 1;
+    // permite apagar o campo (""), depois valida no salvar
+    if (value === "") {
+      setCurrentInstallment("");
+      return;
+    }
+
+    let num = Number(value);
+    if (!Number.isFinite(num)) {
+      return;
+    }
+
     const total = Number(installments) || 1;
 
     if (num < 1) num = 1;
@@ -304,19 +319,25 @@ export function AddExpenseModal({
       return;
     }
 
-    if (paymentMethod === "cartao" && isInstallment) {
-      const total = Number(installments) || 1;
-      const current = Number(currentInstallment) || 1;
+    let total = 1;
+    let current = 1;
 
-      if (total < 1) {
+    if (paymentMethod === "cartao" && isInstallment) {
+      total = Number(installments);
+      if (!Number.isFinite(total) || total < 1) {
         toast.error("Número de parcelas deve ser pelo menos 1.");
         return;
       }
 
-      if (current > total) {
-        toast.error(
-          "A parcela atual não pode ser maior que o total de parcelas."
-        );
+      const currentRaw = currentInstallment.trim();
+      if (!currentRaw) {
+        toast.error("Informe qual é a parcela atual.");
+        return;
+      }
+
+      current = Number(currentRaw);
+      if (!Number.isFinite(current)) {
+        toast.error("Parcela atual inválida.");
         return;
       }
 
@@ -324,6 +345,17 @@ export function AddExpenseModal({
         toast.error("A parcela atual deve ser pelo menos 1.");
         return;
       }
+
+      if (current > total) {
+        toast.error(
+          "A parcela atual não pode ser maior que o número total de parcelas."
+        );
+        return;
+      }
+    } else {
+      // à vista ou débito
+      total = 1;
+      current = 1;
     }
 
     const payload: any = {
@@ -342,17 +374,8 @@ export function AddExpenseModal({
 
     if (paymentMethod === "cartao") {
       payload.creditCardId = selectedCard;
-
-      const total = isInstallment ? Number(installments) || 1 : 1;
-      const current = isInstallment ? Number(currentInstallment) || 1 : 1;
-
-      if (total > 1) {
-        payload.installments = total;
-        payload.currentInstallment = current;
-      } else {
-        payload.installments = 1;
-        payload.currentInstallment = 1;
-      }
+      payload.installments = total;
+      payload.currentInstallment = current;
     }
 
     const isEdit = !!editData?.id;
@@ -401,6 +424,7 @@ export function AddExpenseModal({
             : "Despesa adicionada com sucesso.")
       );
 
+      // aqui você garante a atualização da página (router.refresh ou refetch)
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
@@ -443,8 +467,8 @@ export function AddExpenseModal({
             {isInstallment && totalInstallments > 1 && installmentValue > 0 && (
               <p className="text-xs text-muted-foreground">
                 Valor total da compra: R${" "}
-                {formatNumberToPtBR(totalPurchaseValue)} ({totalInstallments}x de{" "}
-                {formatNumberToPtBR(installmentValue)})
+                {formatNumberToPtBR(totalPurchaseValue)} ({totalInstallments}x
+                de {formatNumberToPtBR(installmentValue)})
               </p>
             )}
           </div>

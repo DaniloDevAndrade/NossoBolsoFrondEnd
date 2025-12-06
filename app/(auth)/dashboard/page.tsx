@@ -98,6 +98,14 @@ const formatDateFromISO = (iso: string | undefined | null) => {
   return d.toLocaleDateString("pt-BR");
 };
 
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+
 /* ===================== PAGE ===================== */
 
 export default function DashboardPage() {
@@ -309,7 +317,7 @@ export default function DashboardPage() {
                 balance >= 0 ? "text-primary" : "text-red-500"
               }`}
             >
-              R$ {balance.toFixed(2)}
+              {formatCurrency(balance)}
             </p>
             <p className="text-xs text-muted-foreground mt-2">Mês atual</p>
           </div>
@@ -323,7 +331,7 @@ export default function DashboardPage() {
             </div>
             <p className="text-sm text-muted-foreground mb-1">Receitas</p>
             <p className="text-2xl sm:text-3xl font-bold text-green-500">
-              R$ {totalIncome.toFixed(2)}
+              {formatCurrency(totalIncome)}
             </p>
             <p className="text-xs text-muted-foreground mt-2">Total recebido</p>
           </div>
@@ -337,7 +345,7 @@ export default function DashboardPage() {
             </div>
             <p className="text-sm text-muted-foreground mb-1">Despesas</p>
             <p className="text-2xl sm:text-3xl font-bold text-red-500">
-              R$ {totalExpenses.toFixed(2)}
+              {formatCurrency(totalExpenses)}
             </p>
             <p className="text-xs text-muted-foreground mt-2">Total gasto</p>
           </div>
@@ -351,7 +359,7 @@ export default function DashboardPage() {
             </div>
             <p className="text-sm text-muted-foreground mb-1">Cartões</p>
             <p className="text-2xl sm:text-3xl font-bold text-red-500">
-              R$ {cards.reduce((sum, c) => sum + c.used, 0).toFixed(0)}
+              {formatCurrency(cards.reduce((sum, c) => sum + c.used, 0))}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               {cards.length} cartões ativos
@@ -404,8 +412,8 @@ export default function DashboardPage() {
                         <div className="flex justify-between text-white text-xs mb-1">
                           <span>Usado</span>
                           <span className="font-semibold">
-                            R$ {card.used.toFixed(0)} / R${" "}
-                            {card.limit.toFixed(0)}
+                            {formatCurrency(card.used)} /{" "}
+                            {formatCurrency(card.limit)}
                           </span>
                         </div>
                         <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
@@ -472,10 +480,10 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex items-baseline gap-2 mb-2">
                         <span className="text-lg font-bold text-primary">
-                          R$ {goal.current.toLocaleString("pt-BR")}
+                          {formatCurrency(goal.current)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          / R$ {goal.target.toLocaleString("pt-BR")}
+                          / {formatCurrency(goal.target)}
                         </span>
                       </div>
                       <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mb-1">
@@ -586,8 +594,8 @@ export default function DashboardPage() {
                                 : "text-red-500"
                             }`}
                           >
-                            {transaction.type === "income" ? "+" : "-"}R{"$ "}
-                            {transaction.value.toFixed(2)}
+                            {transaction.type === "income" ? "+" : "-"}
+                            {formatCurrency(transaction.value)}
                           </td>
                           <td className="py-3 sm:py-4 px-3 sm:px-4 text-sm sm:text-base text-muted-foreground hidden sm:table-cell whitespace-nowrap">
                             {formatDateFromISO(transaction.date)}
