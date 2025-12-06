@@ -13,6 +13,16 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { formatPhoneInput, normalizePhone } from "@/lib/phone-formatter";
 
+// Lê a URL da API em build-time (precisa de NEXT_PUBLIC_API_URL definida no frontend)
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+if (!API_URL) {
+  // Isso vai aparecer no console do navegador em produção se a env não estiver setada
+  console.error(
+    "ERRO CRÍTICO: NEXT_PUBLIC_API_URL não está definida. Configure a env no frontend em produção."
+  );
+}
+
 export default function CadastroPage() {
   const router = useRouter();
 
@@ -43,6 +53,15 @@ export default function CadastroPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (isSubmitting) return;
+
+    // Proteção extra: se a env não estiver definida, não tenta bater na API
+    if (!API_URL) {
+      toast.error(
+        "Configuração da API ausente. Tente novamente mais tarde ou contate o suporte."
+      );
+      console.error("Tentativa de submit sem NEXT_PUBLIC_API_URL configurada.");
+      return;
+    }
 
     try {
       if (!nameRegex.test(formData.nome)) {
@@ -80,15 +99,12 @@ export default function CadastroPage() {
       setIsSubmitting(true);
       toast.loading("Criando sua conta...", { id: "register" });
 
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/register`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include",
-        }
-      );
+      const res = await fetch(`${API_URL}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include",
+      });
 
       const data = await res.json().catch(() => null);
 
@@ -116,7 +132,6 @@ export default function CadastroPage() {
             "Conta criada, mas não conseguimos enviar o código via WhatsApp. Na próxima tela você poderá conferir e alterar o número."
         );
       } else if (status === "pending_verification") {
-
         toast.success(
           data?.message ??
             "Conta já criada, enviamos um novo código de verificação."
