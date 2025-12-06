@@ -1,7 +1,6 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
-import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 import { Toaster } from "sonner"
 
@@ -30,7 +29,6 @@ export default function RootLayout({
       <body className={`${inter.className} antialiased`}>
         {children}
         <Toaster richColors position="top-right" />
-        <Analytics />
       </body>
     </html>
   )
