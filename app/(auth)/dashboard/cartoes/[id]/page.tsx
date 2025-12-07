@@ -60,7 +60,6 @@ type CreditCardDTO = {
   used: number;
   dueDay: number | null;
   closingDay: number | null;
-
   owner: CardOwnerLabel;
   userId: string;
   isCurrentUserOwner: boolean;
@@ -70,14 +69,13 @@ type CardExpenseDTO = {
   id: string;
   description: string;
   category: string;
-  value: number; // valor da PARCELA
-  date: string; // yyyy-MM-dd
-  installment: string | null; // "1/10"
+  value: number;
+  date: string;
+  installment: string | null;
   installmentGroupId: string | null;
-  totalValue: number; // total da compra (todas as parcelas)
+  totalValue: number;
 };
 
-// parse "2/12" -> { current: 2, total: 12 }
 const parseInstallmentString = (installment?: string | null) => {
   if (!installment) return { current: 1, total: 1 };
   const [curStr, totStr] = installment.split("/");
@@ -88,10 +86,10 @@ const parseInstallmentString = (installment?: string | null) => {
   return { current: safeCur, total: tot };
 };
 
-// evita drift de timezone
 const formatDateFromISO = (iso: string | undefined | null) => {
   if (!iso) return "-";
-  const parts = iso.split("-");
+  const base = iso.includes("T") ? iso.split("T")[0] : iso;
+  const parts = base.split("-");
   if (parts.length !== 3) return iso;
   const [year, month, day] = parts.map(Number);
   const d = new Date(year, month - 1, day);
@@ -142,16 +140,11 @@ const getMonthName = (monthStr: string) => {
   return names[month - 1] ?? "";
 };
 
-/**
- * Calcula o mês/ano padrão da fatura:
- * - Se hoje já passou o dia de fechamento → próxima fatura (mês seguinte)
- * - Senão → fatura do mês atual
- */
 const getInitialBillingMonthYear = (
   closingDay?: number | null
 ): { monthStr: string; yearStr: string } => {
   const today = new Date();
-  let month = today.getMonth() + 1; // 1-12
+  let month = today.getMonth() + 1;
   let year = today.getFullYear();
 
   if (typeof closingDay === "number" && closingDay >= 1 && closingDay <= 31) {
@@ -176,8 +169,6 @@ export default function CardDetailsPage() {
   const cardId = params.id as string;
 
   const today = new Date();
-
-  // fallback inicial antes de saber o closingDay
   const [selectedMonth, setSelectedMonth] = useState<string>(
     String(today.getMonth() + 1).padStart(2, "0")
   );
@@ -236,8 +227,7 @@ export default function CardDetailsPage() {
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        const message =
-          data?.message || "Erro ao carregar detalhes do cartão.";
+        const message = data?.message || "Erro ao carregar detalhes do cartão.";
         throw new Error(message);
       }
 
@@ -261,16 +251,13 @@ export default function CardDetailsPage() {
     if (cardId) {
       fetchCardDetails();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId, selectedMonth, selectedYear]);
 
-  // Ajuste automático do mês/ano inicial da fatura ao carregar o cartão
   useEffect(() => {
     if (!card) return;
     if (hasAdjustedInitialFilter) return;
 
     const { monthStr, yearStr } = getInitialBillingMonthYear(card.closingDay);
-
     setSelectedMonth(monthStr);
     setSelectedYear(yearStr);
     setHasAdjustedInitialFilter(true);
@@ -295,7 +282,9 @@ export default function CardDetailsPage() {
       value: expense.value,
       category: expense.category,
       description: expense.description,
-      date: expense.date,
+      date: expense.date.includes("T")
+        ? expense.date.split("T")[0]
+        : expense.date,
       paidBy: card.isCurrentUserOwner
         ? ("Você" as CardOwnerLabel)
         : ("Parceiro" as CardOwnerLabel),
@@ -361,9 +350,6 @@ export default function CardDetailsPage() {
     }
   };
 
-  const monthName = getMonthName(selectedMonth);
-
-  // Skeleton inicial
   if (isLoading && !card && !error) {
     return (
       <DashboardLayout>
@@ -376,7 +362,6 @@ export default function CardDetailsPage() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Voltar para cartões
           </Button>
-          {/* ... skeleton igual ao que você já tinha ... */}
         </div>
       </DashboardLayout>
     );
@@ -421,6 +406,9 @@ export default function CardDetailsPage() {
   }
 
   const theme = bankThemes[card.institution] ?? bankThemes["OUTROS"];
+
+  const monthUsed = expenses.reduce((sum, expense) => sum + expense.value, 0);
+
   const used = card.used ?? 0;
   const usedPercentage =
     card.limit > 0 ? Math.min((used / card.limit) * 100, 100) : 0;
@@ -429,10 +417,11 @@ export default function CardDetailsPage() {
     ? "Você"
     : "Parceiro";
 
+  const monthName = getMonthName(selectedMonth);
+
   return (
     <DashboardLayout>
       <div className="max-w-full">
-        {/* Back Button */}
         <Button
           variant="ghost"
           onClick={handleBack}
@@ -442,7 +431,6 @@ export default function CardDetailsPage() {
           Voltar para cartões
         </Button>
 
-        {/* Card Visual */}
         <div
           className="relative overflow-hidden rounded-2xl sm:rounded-3xl p-6 sm:p-8 shadow-2xl mb-6 sm:mb-8"
           style={{
@@ -508,7 +496,6 @@ export default function CardDetailsPage() {
           <div className="absolute -left-8 -top-8 w-32 h-32 bg-white/5 rounded-full blur-2xl" />
         </div>
 
-        {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
           <div className="bg-card border border-border/20 rounded-2xl p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
@@ -520,7 +507,7 @@ export default function CardDetailsPage() {
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-foreground">
-              {formatCurrency(used)}
+              {formatCurrency(monthUsed)}
             </p>
             <p className="text-sm text-muted-foreground mt-2">
               Fatura de {monthName} / {selectedYear}
@@ -566,7 +553,6 @@ export default function CardDetailsPage() {
           </p>
         )}
 
-        {/* Filtros Mês/Ano */}
         <div className="bg-card border border-border/20 rounded-2xl p-4 sm:p-6 mb-6">
           <div className="flex items-center gap-3 mb-4">
             <Filter className="w-5 h-5 text-muted-foreground" />
@@ -616,7 +602,6 @@ export default function CardDetailsPage() {
           </div>
         </div>
 
-        {/* Lista de despesas */}
         <div className="bg-card border border-border/20 rounded-2xl overflow-hidden">
           <div className="p-4 sm:p-6 border-b border-border/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <h2 className="text-xl sm:text-2xl font-bold text-foreground">

@@ -744,6 +744,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Modals (refaz o fetch ao salvar) */}
       <AddExpenseModal
         open={isModalOpen}
         onOpenChange={setIsModalOpen}

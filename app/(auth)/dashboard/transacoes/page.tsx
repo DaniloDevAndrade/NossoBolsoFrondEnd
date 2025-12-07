@@ -48,10 +48,9 @@ type Transaction = {
   createdById: string;
 
   /**
-   * ⚠️ Backend agora já devolve isso RESOLVIDO
-   * de acordo com a conta logada:
-   * - "Você"  -> este usuário
-   * - "Parceiro" -> o outro usuário
+   * Backend devolve isso RESOLVIDO conforme o usuário logado:
+   * - "Você"
+   * - "Parceiro"
    */
   responsible: "Você" | "Parceiro";
 
@@ -108,9 +107,8 @@ export default function TransacoesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("todas");
 
   /**
-   * Agora o filtro de responsável é APENAS em cima do
-   * que o backend manda em `transaction.responsible`,
-   * exatamente como o Dashboard Individual faz.
+   * Filtro de responsável em cima do campo `responsible` que
+   * já vem pronto do backend de acordo com o usuário logado.
    */
   const [selectedResponsible, setSelectedResponsible] = useState<
     "todos" | "voce" | "parceiro"
@@ -146,6 +144,7 @@ export default function TransacoesPage() {
 
       const params = new URLSearchParams();
 
+      // Enviamos mês e ano para o backend (que agora filtra corretamente)
       if (selectedMonth) params.set("month", String(Number(selectedMonth)));
       if (selectedYear) params.set("year", selectedYear);
 
@@ -157,9 +156,6 @@ export default function TransacoesPage() {
         params.set("category", selectedCategory);
       }
 
-      // ⚠️ NÃO enviamos "responsible" para a API.
-      // O backend já devolve o campo de forma correta
-      // de acordo com a conta logada. O filtro é só no front.
       const res = await fetch(`${API_URL}/transactions?${params.toString()}`, {
         method: "GET",
         credentials: "include",
@@ -198,13 +194,8 @@ export default function TransacoesPage() {
   }, [selectedMonth, selectedYear, selectedType, selectedCategory]);
 
   /**
-   * 🔑 Filtro de RESPONSÁVEL:
-   * - "voce"     => transactions com responsible === "Você"
-   * - "parceiro" => transactions com responsible === "Parceiro"
-   * - "todos"    => não filtra
-   *
-   * O valor de `responsible` já vem pronto do backend
-   * com base em QUEM está logado (dinâmico).
+   * Agora confiamos no backend para o filtro de mês/ano.
+   * Aqui filtramos apenas por RESPONSÁVEL.
    */
   const baseFilteredTransactions = transactions.filter((t) => {
     if (selectedResponsible === "voce") {
@@ -216,9 +207,13 @@ export default function TransacoesPage() {
     return true; // "todos"
   });
 
-  const sortedTransactions = [...baseFilteredTransactions].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-  );
+  /**
+   * Ordenação: mais recente primeiro (em cima de `date`)
+   * `date` vem como data da compra, consistente com o backend.
+   */
+  const sortedTransactions = [...baseFilteredTransactions].sort((a, b) => {
+    return new Date(b.date).getTime() - new Date(a.date).getTime();
+  });
 
   const totalIncome = baseFilteredTransactions
     .filter((t) => t.type === "income")
@@ -680,7 +675,7 @@ export default function TransacoesPage() {
                       {transaction.type === "income" ? "+" : "-"}
                       {formatCurrency(transaction.value)}
                     </td>
-                    {/* 🔥 Responsável AGORA vem direto do backend (dinâmico) */}
+                    {/* Responsável vem direto do backend */}
                     <td className="py-4 px-4 sm:px-6 text-muted-foreground">
                       {transaction.responsible}
                     </td>

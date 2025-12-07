@@ -30,7 +30,6 @@ interface AddExpenseModalProps {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
-// helpers de moeda
 const formatNumberToPtBR = (value: number) =>
   value.toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
@@ -61,14 +60,17 @@ type CreditCardOption = {
   owner: CardOwner;
 };
 
-const parseInstallmentString = (installment?: string | null) => {
-  if (!installment) return { current: 1, total: 1 };
-  const [curStr, totStr] = installment.split("/");
-  const cur = Number(curStr);
+/**
+ * Agora só nos importamos com o TOTAL de parcelas.
+ * Ex: "3/10" -> 10
+ */
+const parseInstallmentString = (installment?: string | null): number => {
+  if (!installment) return 1;
+  const parts = installment.split("/");
+  const totStr = parts.length === 2 ? parts[1] : parts[0];
   const tot = Number(totStr);
-  if (!Number.isFinite(tot) || tot < 1) return { current: 1, total: 1 };
-  const safeCur = Number.isFinite(cur) && cur >= 1 ? cur : 1;
-  return { current: safeCur, total: tot };
+  if (!Number.isFinite(tot) || tot < 1) return 1;
+  return tot;
 };
 
 export function AddExpenseModal({
@@ -87,7 +89,6 @@ export function AddExpenseModal({
 
   const [isInstallment, setIsInstallment] = useState(false);
   const [installments, setInstallments] = useState("1");
-  const [currentInstallment, setCurrentInstallment] = useState("1");
 
   const [editScope, setEditScope] = useState<"single" | "all">("all");
 
@@ -175,43 +176,28 @@ export function AddExpenseModal({
         }
 
         let totalInstallments = 1;
-        let current = 1;
 
         if (
           typeof editData.installments === "number" &&
           editData.installments > 1
         ) {
           totalInstallments = editData.installments;
-          if (
-            typeof editData.currentInstallment === "number" &&
-            editData.currentInstallment >= 1 &&
-            editData.currentInstallment <= totalInstallments
-          ) {
-            current = editData.currentInstallment;
-          } else {
-            current = 1;
-          }
         } else if (typeof editData.installment === "string") {
-          const parsed = parseInstallmentString(editData.installment);
-          totalInstallments = parsed.total;
-          current = parsed.current;
+          totalInstallments = parseInstallmentString(editData.installment);
         }
 
         if (totalInstallments > 1) {
           setIsInstallment(true);
           setInstallments(String(totalInstallments));
-          setCurrentInstallment(String(current));
         } else {
           setIsInstallment(false);
           setInstallments("1");
-          setCurrentInstallment("1");
         }
       } else {
         setPaymentMethod("dinheiro");
         setSelectedCard("");
         setIsInstallment(false);
         setInstallments("1");
-        setCurrentInstallment("1");
       }
 
       setEditScope("all");
@@ -226,7 +212,6 @@ export function AddExpenseModal({
 
       setIsInstallment(false);
       setInstallments("1");
-      setCurrentInstallment("1");
       setEditScope("all");
 
       if (preselectedCardId) {
@@ -259,30 +244,6 @@ export function AddExpenseModal({
     if (total < 1) total = 1;
 
     setInstallments(String(total));
-
-    const current = Number(currentInstallment) || 1;
-    if (current > total) {
-      setCurrentInstallment(String(total));
-    }
-  };
-
-  const handleCurrentInstallmentChange = (value: string) => {
-    if (value === "") {
-      setCurrentInstallment("");
-      return;
-    }
-
-    let num = Number(value);
-    if (!Number.isFinite(num)) {
-      return;
-    }
-
-    const total = Number(installments) || 1;
-
-    if (num < 1) num = 1;
-    if (num > total) num = total;
-
-    setCurrentInstallment(String(num));
   };
 
   const handleSave = async () => {
@@ -314,7 +275,6 @@ export function AddExpenseModal({
     }
 
     let total = 1;
-    let current = 1;
 
     if (paymentMethod === "cartao" && isInstallment) {
       total = Number(installments);
@@ -322,37 +282,24 @@ export function AddExpenseModal({
         toast.error("Número de parcelas deve ser pelo menos 1.");
         return;
       }
-
-      const currentRaw = currentInstallment.trim();
-      if (!currentRaw) {
-        toast.error("Informe qual é a parcela atual.");
-        return;
-      }
-
-      current = Number(currentRaw);
-      if (!Number.isFinite(current)) {
-        toast.error("Parcela atual inválida.");
-        return;
-      }
-
-      if (current < 1) {
-        toast.error("A parcela atual deve ser pelo menos 1.");
-        return;
-      }
-
-      if (current > total) {
-        toast.error(
-          "A parcela atual não pode ser maior que o número total de parcelas."
-        );
-        return;
-      }
     } else {
       total = 1;
-      current = 1;
+    }
+
+    const isEdit = !!editData?.id;
+
+    let apiValue = numericValue;
+
+    const isCreditInstallment =
+      !isEdit && paymentMethod === "cartao" && total > 1;
+
+    // Se for uma nova compra parcelada, manda o valor total para o backend
+    if (isCreditInstallment) {
+      apiValue = numericValue * total;
     }
 
     const payload: any = {
-      value: numericValue,
+      value: apiValue,
       category: formData.category.trim(),
       description: formData.description.trim(),
       date: formData.date,
@@ -365,12 +312,10 @@ export function AddExpenseModal({
       paymentMethod,
     };
 
-    const isEdit = !!editData?.id;
-
     if (paymentMethod === "cartao") {
       payload.creditCardId = selectedCard;
       payload.installments = total;
-      payload.currentInstallment = current;
+      // NÃO enviamos mais currentInstallment
     }
 
     const url = isEdit
@@ -430,8 +375,18 @@ export function AddExpenseModal({
   };
 
   const installmentValue = parseCurrencyToNumber(formData.value);
-  const totalInstallments = isInstallment ? Number(installments) || 1 : 1;
-  const totalPurchaseValue = installmentValue * totalInstallments;
+  const totalInstallments =
+    paymentMethod === "cartao"
+      ? isInstallment
+        ? Number(installments) || 1
+        : 1
+      : 1;
+  const totalPurchaseValue =
+    totalInstallments > 1 ? installmentValue * totalInstallments : installmentValue;
+  const showInstallmentInfo =
+    paymentMethod === "cartao" &&
+    totalInstallments > 1 &&
+    installmentValue > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -443,7 +398,6 @@ export function AddExpenseModal({
         </DialogHeader>
 
         <div className="space-y-5 py-4">
-          {/* Valor da parcela */}
           <div className="space-y-2">
             <Label htmlFor="valor" className="text-foreground">
               Valor da parcela (R$)
@@ -457,16 +411,15 @@ export function AddExpenseModal({
               onChange={(e) => handleValueChange(e.target.value)}
               className="bg-input border-border/20 text-lg h-12"
             />
-            {isInstallment && totalInstallments > 1 && installmentValue > 0 && (
+            {showInstallmentInfo && (
               <p className="text-xs text-muted-foreground">
-                Valor total da compra: R${" "}
+                Valor total da compra: R{"$ "}
                 {formatNumberToPtBR(totalPurchaseValue)} ({totalInstallments}x
                 de {formatNumberToPtBR(installmentValue)})
               </p>
             )}
           </div>
 
-          {/* Categoria */}
           <div className="space-y-2">
             <Label htmlFor="categoria" className="text-foreground">
               Categoria
@@ -490,7 +443,6 @@ export function AddExpenseModal({
             </Select>
           </div>
 
-          {/* Descrição */}
           <div className="space-y-2">
             <Label htmlFor="descricao" className="text-foreground">
               Descrição (opcional)
@@ -507,10 +459,9 @@ export function AddExpenseModal({
             />
           </div>
 
-          {/* Data */}
           <div className="space-y-2">
             <Label htmlFor="data" className="text-foreground">
-              Data
+              Data da compra
             </Label>
             <Input
               id="data"
@@ -523,7 +474,6 @@ export function AddExpenseModal({
             />
           </div>
 
-          {/* Quem pagou */}
           <div className="space-y-2">
             <Label htmlFor="pagador" className="text-foreground">
               Quem pagou (no cartão / à vista)
@@ -542,7 +492,6 @@ export function AddExpenseModal({
             </Select>
           </div>
 
-          {/* Forma de pagamento */}
           <div className="space-y-2">
             <Label htmlFor="payment-method" className="text-foreground">
               Forma de pagamento
@@ -565,7 +514,6 @@ export function AddExpenseModal({
             </Select>
           </div>
 
-          {/* Cartão de crédito + parcelas */}
           {paymentMethod === "cartao" && (
             <>
               <div className="space-y-2">
@@ -607,7 +555,6 @@ export function AddExpenseModal({
                 </Select>
               </div>
 
-              {/* Parcelar compra */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <Label
@@ -645,30 +592,6 @@ export function AddExpenseModal({
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <Label
-                        htmlFor="current-installment"
-                        className="text-foreground text-sm"
-                      >
-                        Parcela atual
-                      </Label>
-                      <Input
-                        id="current-installment"
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={currentInstallment}
-                        onChange={(e) =>
-                          handleCurrentInstallmentChange(e.target.value)
-                        }
-                        className="bg-input border-border/20"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        A parcela atual nunca pode ser maior que o número total
-                        de parcelas.
-                      </p>
-                    </div>
-
                     {editData && Number(installments) > 1 && (
                       <div className="space-y-2">
                         <Label className="text-foreground text-sm">
@@ -701,7 +624,6 @@ export function AddExpenseModal({
           )}
         </div>
 
-        {/* Actions */}
         <div className="flex gap-3 pt-4">
           <Button
             variant="outline"
